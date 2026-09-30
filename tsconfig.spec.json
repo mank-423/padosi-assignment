@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "rootDir": "."
+  },
+  "include": ["src/**/*.spec.ts"]
+}

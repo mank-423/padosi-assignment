@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  passwordHash  String
+  emailVerified Boolean    @default(false)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  profile       Profile?
+  otps          OtpCode[]
+  selectedTasks UserTask[]
+
+  @@map("users")
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("otp_codes")
+}
+
+model Profile {
+  userId       String   @id
+  name         String
+  mobile       String
+  address      String
+  businessName String?
+  completedAt  DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Category {
+  id    String @id @default(uuid())
+  name  String @unique
+  tasks Task[]
+
+  @@map("categories")
+}
+
+model Task {
+  id          String     @id @default(uuid())
+  categoryId  String
+  name        String
+  description String
+  createdAt   DateTime   @default(now())
+
+  category    Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  users       UserTask[]
+
+  @@index([categoryId])
+  @@map("tasks")
+}
+
+model UserTask {
+  userId String
+  taskId String
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([userId, taskId])
+  @@map("user_tasks")
+}
