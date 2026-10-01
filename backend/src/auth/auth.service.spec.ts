@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { vi } from 'vitest';
 import { AuthService } from './auth.service';
 import { ConflictException } from '@nestjs/common';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 
 describe('AuthService — login rules', () => {
   let svc: AuthService;
