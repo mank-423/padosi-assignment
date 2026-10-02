@@ -1,52 +1,36 @@
-import React, { useState } from 'react';
-import { View, ScrollView, Text, StyleSheet, Alert } from 'react-native';
-import { Input } from '../components/Input';
-import { Button } from '../components/Button';
+import React from 'react';
+import { Text, StyleSheet } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
+import { Screen } from '../components/Screen';
+import { ProfileForm } from '../components/ProfileForm';
 import { profileApi } from '../api/profile';
-import { getErrorMessage } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
+import { colors, fonts } from '../theme';
 
-export default function ProfileScreen({ navigation }: any) {
-  const [name, setName] = useState('');
-  const [mobile, setMobile] = useState('+91');
-  const [address, setAddress] = useState('');
-  const [businessName, setBusinessName] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const submit = async () => {
-    if (name.length < 2) return Alert.alert('Check name', 'Name is too short.');
-    if (!/^\+91[6-9]\d{9}$/.test(mobile)) return Alert.alert('Check mobile', 'Use +91 followed by 10 digits.');
-    if (address.length < 5) return Alert.alert('Check address', 'Address is too short.');
-
-    setLoading(true);
-    try {
-      await profileApi.save({ name, mobile, address, businessName: businessName || undefined });
-      navigation.reset({ index: 0, routes: [{ name: 'TaskSelection' }] });
-    } catch (err) {
-      Alert.alert('Could not save', getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
+// Shown once, right after the first successful login
+export default function ProfileScreen() {
+  const { profileCompleted, signOut } = useAuth();
+  const qc = useQueryClient();
 
   return (
-    <ScrollView contentContainerStyle={s.container}>
+    <Screen>
       <Text style={s.title}>Tell us about you</Text>
-      <Input label="Name" value={name} onChangeText={setName} autoCapitalize="words" />
-      <Input
-        label="Mobile (+91XXXXXXXXXX)"
-        value={mobile}
-        onChangeText={(t) => setMobile(t.replace(/[^\d+]/g, ''))}
-        keyboardType="phone-pad"
-        maxLength={13}
+      <Text style={s.sub}>This helps your Lifestyle Manager get things done for you.</Text>
+      <ProfileForm
+        submitLabel="Continue"
+        onSubmit={async (p) => {
+          const res = await profileApi.save(p);
+          qc.setQueryData(['profile'], res);
+          profileCompleted(); // goes to Home; this screen never shows again
+        }}
       />
-      <Input label="Address" value={address} onChangeText={setAddress} multiline />
-      <Input label="Business name (optional)" value={businessName} onChangeText={setBusinessName} autoCapitalize="words" />
-      <Button title="Continue" onPress={submit} loading={loading} />
-    </ScrollView>
+      <Text style={s.link} onPress={signOut}>Log out</Text>
+    </Screen>
   );
 }
 
 const s = StyleSheet.create({
-  container: { padding: 24, backgroundColor: '#fff', flexGrow: 1 },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 24 },
+  title: { fontSize: 24, fontFamily: fonts.bold, color: colors.text, marginBottom: 6 },
+  sub: { color: colors.muted, marginBottom: 24, fontFamily: fonts.regular },
+  link: { textAlign: 'center', marginTop: 20, color: colors.primary, fontFamily: fonts.semibold },
 });

@@ -1,56 +1,75 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { Text, StyleSheet, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Screen } from '../components/Screen';
+import { Brand } from '../components/Brand';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
 import { authApi } from '../api/auth';
-import { getErrorMessage } from '../api/client';
+import { getErrorCode, getErrorMessage, normalizeEmail } from '../api/client';
+import { RootStackParamList } from '../navigation/types';
+import { colors, fonts } from '../theme';
 
-export default function RegisterScreen({ navigation }: any) {
+type Props = NativeStackScreenProps<RootStackParamList, 'Register'>;
+type Field = 'email' | 'password' | 'confirm';
+
+export default function RegisterScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({});
+  const [submitted, setSubmitted] = useState(false);
 
-  const validate = () => {
-    const e: Record<string, string> = {};
-    if (!/^\S+@\S+\.\S+$/.test(email)) e.email = 'Enter a valid email.';
-    if (password.length < 8) e.password = 'At least 8 characters.';
-    if (password !== confirm) e.confirm = 'Passwords do not match.';
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  };
+  const errors: Partial<Record<Field, string>> = {};
+  if (!/^\S+@\S+\.\S+$/.test(email.trim())) errors.email = 'Enter a valid email address.';
+  if (password.length < 8) errors.password = 'Password must be at least 8 characters.';
+  if (password !== confirm) errors.confirm = 'Passwords do not match.';
+
+  // Inline validation: show an error once the field was visited or submit was tried
+  const show = (f: Field) => (touched[f] || submitted ? errors[f] : undefined);
+  const blur = (f: Field) => () => setTouched((t) => ({ ...t, [f]: true }));
 
   const submit = async () => {
-    if (!validate()) return;
+    setSubmitted(true);
+    if (Object.keys(errors).length > 0) return;
     setLoading(true);
     try {
       await authApi.register(email, password);
-      navigation.navigate('VerifyOtp', { email });
+      navigation.navigate('VerifyOtp', { email: normalizeEmail(email), fromRegister: true });
     } catch (err) {
-      Alert.alert('Sign up failed', getErrorMessage(err));
+      if (getErrorCode(err) === 'EMAIL_TAKEN') {
+        Alert.alert('Account exists', getErrorMessage(err), [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Log in', onPress: () => navigation.navigate('Login') },
+        ]);
+      } else {
+        Alert.alert('Sign up failed', getErrorMessage(err));
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={s.container}>
+    <Screen center>
+      <Brand />
       <Text style={s.title}>Create your account</Text>
-      <Input label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" error={errors.email} />
-      <Input label="Password" value={password} onChangeText={setPassword} secureTextEntry error={errors.password} />
-      <Input label="Confirm password" value={confirm} onChangeText={setConfirm} secureTextEntry error={errors.confirm} />
+      <Input label="Email" value={email} onChangeText={setEmail} onBlur={blur('email')}
+        keyboardType="email-address" autoComplete="email" error={show('email')} />
+      <Input label="Password" value={password} onChangeText={setPassword} onBlur={blur('password')}
+        secureTextEntry error={show('password')} />
+      <Input label="Confirm password" value={confirm} onChangeText={setConfirm} onBlur={blur('confirm')}
+        secureTextEntry error={show('confirm')} />
       <Button title="Sign up" onPress={submit} loading={loading} />
       <Text style={s.link} onPress={() => navigation.navigate('Login')}>
         Already have an account? Log in
       </Text>
-    </View>
+    </Screen>
   );
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, padding: 24, justifyContent: 'center', backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 24 },
-  link: { textAlign: 'center', marginTop: 16, color: '#2563eb' },
+  title: { fontSize: 22, fontFamily: fonts.bold, color: colors.text, marginBottom: 20 },
+  link: { textAlign: 'center', marginTop: 20, color: colors.primary, fontFamily: fonts.semibold },
 });
