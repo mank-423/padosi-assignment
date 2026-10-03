@@ -4,7 +4,7 @@ A native mobile app and REST API for the first customer journey: sign up, verify
 
 - **Mobile:** React Native (Expo), TypeScript, React Navigation, TanStack Query
 - **Backend:** NestJS, Prisma, PostgreSQL, JWT auth
-- **Email:** OTP codes sent through the [Resend](https://resend.com) HTTP API from `noreply@projectmayank.online`
+- **Email:** OTP codes sent through the [Resend](https://resend.com) HTTP API from `noreply@projectmayank.online`. Check in spam for the email if not found.
 
 > **Reviewing quickly?** Skip to [Try the app (APK)](#try-the-app-apk). Everything is already hosted, so you don't need to run anything locally.
 
@@ -14,21 +14,19 @@ A native mobile app and REST API for the first customer journey: sign up, verify
 
 | | |
 |---|---|
-| **Screen recording** | `https://drive.google.com/file/d/1jhdOXVmcK5yVZiXgVH4-zb61rVvyCo5O/view?usp=sharing` |
-| **Android APK** | `https://drive.google.com/file/d/1nugJbloBVKz8afQv0TreI3xNDREp0bON/view?usp=sharing` |
+| **Screen recording** | [Watch the full flow](https://drive.google.com/file/d/1jhdOXVmcK5yVZiXgVH4-zb61rVvyCo5O/view?usp=sharing) |
+| **Android APK** | [Download the APK](https://drive.google.com/file/d/1nugJbloBVKz8afQv0TreI3xNDREp0bON/view?usp=sharing) |
 | **Hosted API** | https://padosi-assignment-ti5i.onrender.com |
 
 ### Screenshots
 
 | Sign up | Verify email | Profile |
-|---|---|---|
-| ![Sign up](docs/screenshots/01-signup.png) | ![Verify email](docs/screenshots/02-verify.png) | ![Profile](docs/screenshots/03-profile.png) |
+|:---:|:---:|:---:|
+| <img src="https://github.com/user-attachments/assets/0d1d9ed2-69b1-470d-9f3b-6c057a39fd44" width="220" alt="Sign up screen"> | <img src="https://github.com/user-attachments/assets/e7de0f88-2e14-44ae-981a-f42cb46f6e5f" width="220" alt="Verify email screen"> | <img src="https://github.com/user-attachments/assets/f9266557-cbc5-41ee-bf95-6c6ce6c04b73" width="220" alt="Profile screen"> |
 
 | Home | Pick tasks | Task details |
-|---|---|---|
-| ![Home](docs/screenshots/04-home.png) | ![Pick tasks](docs/screenshots/05-tasks.png) | ![Task details](docs/screenshots/06-task-detail.png) |
-
-`TODO: add the screenshot files to docs/screenshots/ with these names (or edit the paths above).`
+|:---:|:---:|:---:|
+| <img src="https://github.com/user-attachments/assets/73bf86ff-7725-4ff4-962b-d731bb2ae446" width="220" alt="Home screen"> | <img src="https://github.com/user-attachments/assets/5da708ea-6f6c-488c-8eb3-81877e790d01" width="220" alt="Pick tasks screen"> | <img src="https://github.com/user-attachments/assets/4f5e9d7e-a9b2-4255-a8c9-ec5d3af5452b" width="220" alt="Task details screen"> |
 
 ---
 
@@ -57,7 +55,6 @@ padosipro/
 │   └── src/            auth, otp, mail, users (profile), tasks, common
 ├── mobile/             Expo app
 │   └── src/            api, auth, components, screens, navigation, theme
-├── docs/screenshots/   screenshots used in this README
 ├── README.md
 └── DESIGN.md           architecture, trade-offs, next steps
 ```
