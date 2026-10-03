@@ -1,24 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { Text, StyleSheet } from 'react-native';
+import { Text, StyleSheet, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Screen } from '../components/Screen';
 import { Input } from '../components/Input';
 import { Button } from '../components/Button';
 import { authApi } from '../api/auth';
-import { getErrorMessage, saveToken } from '../api/client';
+import { getErrorCode, getErrorMessage, saveToken } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { RootStackParamList } from '../navigation/types';
 import { colors, fonts } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'VerifyOtp'>;
 
-export default function VerifyOtpScreen({ route }: Props) {
-  const { email, fromRegister } = route.params;
+export default function VerifyOtpScreen({ route, navigation }: Props) {
+  const { email, fromRegister, sendFailed } = route.params;
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
-  // A code was just sent (register / login redirect), so start the cooldown at 30s
-  const [cooldown, setCooldown] = useState(fromRegister ? 30 : 0);
+  // A code was just issued (register / login redirect), so the server cooldown is
+  // running: start the timer at 30s.
+  const [cooldown, setCooldown] = useState(fromRegister || sendFailed ? 30 : 0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const { signIn } = useAuth();
@@ -28,6 +29,12 @@ export default function VerifyOtpScreen({ route }: Props) {
     const t = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
     return () => clearInterval(t);
   }, [cooldown > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The account is already verified: the only way forward is to log in
+  const handleAlreadyVerified = (message: string) =>
+    Alert.alert('Already verified', message, [
+      { text: 'Log in', onPress: () => navigation.navigate('Login') },
+    ]);
 
   const verify = async () => {
     if (code.length !== 6) return;
@@ -39,7 +46,8 @@ export default function VerifyOtpScreen({ route }: Props) {
       await saveToken(res.accessToken);
       await signIn(); // navigator moves to Profile or Home
     } catch (err) {
-      setError(getErrorMessage(err)); // wrong / expired / too many attempts
+      if (getErrorCode(err) === 'ALREADY_VERIFIED') handleAlreadyVerified(getErrorMessage(err));
+      else setError(getErrorMessage(err)); // wrong / expired / too many attempts
       setLoading(false);
     }
   };
@@ -55,9 +63,14 @@ export default function VerifyOtpScreen({ route }: Props) {
       setNotice('A new code has been sent.');
     } catch (err) {
       const msg = getErrorMessage(err);
-      const m = /(\d+)s/.exec(msg); // sync the timer with "Please wait 25s ..."
-      if (m) setCooldown(Number(m[1]));
-      else setError(msg);
+      if (getErrorCode(err) === 'ALREADY_VERIFIED') {
+        handleAlreadyVerified(msg);
+      } else if (getErrorCode(err) === 'OTP_COOLDOWN') {
+        const m = /(\d+)s/.exec(msg); // sync the timer with "Please wait 25s ..."
+        if (m) setCooldown(Number(m[1]));
+      } else {
+        setError(msg);
+      }
     } finally {
       setResending(false);
     }
@@ -68,7 +81,11 @@ export default function VerifyOtpScreen({ route }: Props) {
   return (
     <Screen center>
       <Text style={s.title}>Check your email</Text>
-      <Text style={s.sub}>We sent a 6-digit code to {email}</Text>
+      <Text style={s.sub}>
+        {sendFailed
+          ? `We couldn't send the code to ${email}. Tap "Resend code" to try again.`
+          : `We sent a 6-digit code to ${email}`}
+      </Text>
       <Input
         label="Code"
         value={code}

@@ -2,7 +2,7 @@ export type RootStackParamList = {
   // signed out
   Login: undefined;
   Register: undefined;
-  VerifyOtp: { email: string; fromRegister?: boolean };
+  VerifyOtp: { email: string; fromRegister?: boolean; sendFailed?: boolean };
   // first login
   Profile: undefined;
   // main app

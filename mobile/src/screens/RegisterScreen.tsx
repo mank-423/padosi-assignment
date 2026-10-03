@@ -24,6 +24,7 @@ export default function RegisterScreen({ navigation }: Props) {
   const errors: Partial<Record<Field, string>> = {};
   if (!/^\S+@\S+\.\S+$/.test(email.trim())) errors.email = 'Enter a valid email address.';
   if (password.length < 8) errors.password = 'Password must be at least 8 characters.';
+  else if (password.length > 72) errors.password = 'Password must be at most 72 characters.';
   if (password !== confirm) errors.confirm = 'Passwords do not match.';
 
   // Inline validation: show an error once the field was visited or submit was tried
@@ -38,11 +39,16 @@ export default function RegisterScreen({ navigation }: Props) {
       await authApi.register(email, password);
       navigation.navigate('VerifyOtp', { email: normalizeEmail(email), fromRegister: true });
     } catch (err) {
-      if (getErrorCode(err) === 'EMAIL_TAKEN') {
+      const code = getErrorCode(err);
+      if (code === 'EMAIL_TAKEN') {
         Alert.alert('Account exists', getErrorMessage(err), [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Log in', onPress: () => navigation.navigate('Login') },
         ]);
+      } else if (code === 'OTP_SEND_FAILED') {
+        // The account exists but the email failed: send them to the verify
+        // screen, where "Resend code" is available, instead of a dead end.
+        navigation.navigate('VerifyOtp', { email: normalizeEmail(email), sendFailed: true });
       } else {
         Alert.alert('Sign up failed', getErrorMessage(err));
       }
