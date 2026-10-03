@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async listCategories() {
     return this.prisma.category.findMany({
@@ -51,21 +51,45 @@ export class TasksService {
     return this.getSelectedTasks(userId);
   }
 
+  async addOrUpdateSelection(userId: string, taskId: string, description?: string) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) {
+      throw new BadRequestException({
+        error: 'INVALID_TASK_ID',
+        message: 'That task does not exist.',
+      });
+    }
+
+    await this.prisma.userTask.upsert({
+      where: { userId_taskId: { userId, taskId } },
+      create: { userId, taskId, description: description ?? null },
+      update: { description: description ?? null },
+    });
+
+    return this.getSelectedTasks(userId);
+  }
+
+  async removeSelection(userId: string, taskId: string) {
+    await this.prisma.userTask.deleteMany({ where: { userId, taskId } });
+    return this.getSelectedTasks(userId);
+  }
+
   async getSelectedTasks(userId: string) {
     const rows = await this.prisma.userTask.findMany({
       where: { userId },
+      orderBy: { createdAt: 'desc' },
       include: {
-        task: {
-          include: { category: { select: { id: true, name: true } } },
-        },
+        task: { include: { category: { select: { id: true, name: true } } } },
       },
     });
 
     return rows.map((r) => ({
       id: r.task.id,
       name: r.task.name,
-      description: r.task.description,
+      description: r.task.description,          // catalogue description
+      customDescription: r.description,          // user's note (was null before)
       category: r.task.category,
+      createdAt: r.createdAt.toISOString(),
     }));
   }
 }
