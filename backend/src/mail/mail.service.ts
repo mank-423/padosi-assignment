@@ -9,8 +9,7 @@ export class MailService {
   private readonly from: string;
 
   constructor(private readonly config: ConfigService) {
-    const apiKey = this.config.getOrThrow<string>('RESEND_API_KEY');
-    this.resend = new Resend(apiKey);
+    this.resend = new Resend(this.config.getOrThrow<string>('RESEND_API_KEY'));
     this.from = this.config.getOrThrow<string>('MAIL_FROM');
   }
 
@@ -38,7 +37,7 @@ export class MailService {
       this.logger.log(`OTP email sent to ${to}`);
     } catch (err) {
       this.logger.error(`Mail send failed: ${(err as Error).message}`);
-      throw err;
+      throw new Error('Failed to send verification email.');
     }
   }
 }

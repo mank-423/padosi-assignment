@@ -1,14 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomInt, createHash } from 'crypto';
+import { randomInt, createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type OtpErrorCode =
   | 'OTP_INVALID'
   | 'OTP_EXPIRED'
   | 'OTP_ATTEMPTS_EXCEEDED'
-  | 'OTP_COOLDOWN'
-  | 'OTP_ALREADY_CONSUMED';
+  | 'OTP_COOLDOWN';
 
 export class OtpError extends Error {
   constructor(public code: OtpErrorCode, message: string) {
@@ -18,12 +17,17 @@ export class OtpError extends Error {
 
 @Injectable()
 export class OtpService {
-  private readonly logger = new Logger(OtpService.name);
+  private readonly secret: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    // Key for the OTP hash. Falls back to JWT_SECRET so no new env var is required.
+    this.secret =
+      this.config.get<string>('OTP_SECRET') ??
+      this.config.getOrThrow<string>('JWT_SECRET');
+  }
 
   // -------- Pure helpers (unit-tested) --------
 
@@ -33,13 +37,22 @@ export class OtpService {
   }
 
   /**
-   * Deterministic hash for the OTP.
-   * Why SHA-256 and not bcrypt? OTPs are short-lived, low-value, and rate-limited.
-   * bcrypt is 100x slower and would add latency to every verify call.
-   * The assignment only requires "store a hash, not plaintext" — SHA-256 satisfies that.
+   * Keyed hash (HMAC-SHA256) of userId + code.
+   * A plain SHA-256 of a 6-digit code can be reversed from a leaked table in
+   * milliseconds (only 1,000,000 possibilities). Keying it with a server secret
+   * and binding it to the user fixes that while staying fast, unlike bcrypt.
    */
-  hashCode(code: string): string {
-    return createHash('sha256').update(code).digest('hex');
+  hashCode(userId: string, code: string): string {
+    return createHmac('sha256', this.secret)
+      .update(`${userId}:${code}`)
+      .digest('hex');
+  }
+
+  /** Constant-time comparison against a stored hash. */
+  codeMatches(userId: string, code: string, storedHash: string): boolean {
+    const a = Buffer.from(this.hashCode(userId, code), 'hex');
+    const b = Buffer.from(storedHash, 'hex');
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   isExpired(expiresAt: Date, now: Date = new Date()): boolean {
@@ -48,11 +61,11 @@ export class OtpService {
 
   // -------- DB-backed operations --------
 
+  /** Creates a new code and returns the plaintext so the caller can email it. */
   async issueForUser(userId: string): Promise<string> {
-    const ttlMinutes = this.config.get<number>('OTP_TTL_MINUTES', 10);
-    const cooldownSeconds = this.config.get<number>(
-      'OTP_RESEND_COOLDOWN_SECONDS',
-      30,
+    const ttlMinutes = Number(this.config.get('OTP_TTL_MINUTES', 10));
+    const cooldownSeconds = Number(
+      this.config.get('OTP_RESEND_COOLDOWN_SECONDS', 30),
     );
 
     const last = await this.prisma.otpCode.findFirst({
@@ -80,22 +93,17 @@ export class OtpService {
     const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
     await this.prisma.otpCode.create({
-      data: {
-        userId,
-        codeHash: this.hashCode(code),
-        expiresAt,
-      },
+      data: { userId, codeHash: this.hashCode(userId, code), expiresAt },
     });
 
-    // Caller is responsible for actually sending `code` via email.
-    // We log only in dev so we don't leak the code in prod.
-    this.logger.debug(`OTP for user ${userId}: ${code}`);
-    return code; // intentionally not returned — send via mail service
+    // The plaintext code is never logged or stored; only the hash is persisted.
+    return code;
   }
 
   async verifyForUser(userId: string, code: string): Promise<void> {
-    const maxAttempts = this.config.get<number>('OTP_MAX_ATTEMPTS', 5);
+    const maxAttempts = Number(this.config.get('OTP_MAX_ATTEMPTS', 5));
 
+    // Only unconsumed codes are considered, so a used code reads as "no active code"
     const record = await this.prisma.otpCode.findFirst({
       where: { userId, consumed: false },
       orderBy: { createdAt: 'desc' },
@@ -104,15 +112,9 @@ export class OtpService {
     if (!record) {
       throw new OtpError('OTP_INVALID', 'No active code. Request a new one.');
     }
-
-    if (record.consumed) {
-      throw new OtpError('OTP_ALREADY_CONSUMED', 'This code was already used.');
-    }
-
     if (this.isExpired(record.expiresAt)) {
       throw new OtpError('OTP_EXPIRED', 'This code has expired. Request a new one.');
     }
-
     if (record.attempts >= maxAttempts) {
       throw new OtpError(
         'OTP_ATTEMPTS_EXCEEDED',
@@ -120,19 +122,30 @@ export class OtpService {
       );
     }
 
-    const matches = this.hashCode(code) === record.codeHash;
+    // Count this attempt atomically BEFORE comparing. Parallel requests cannot
+    // all read "attempts = 0": the `lt` condition makes the database enforce the limit.
+    const claimed = await this.prisma.otpCode.updateMany({
+      where: { id: record.id, consumed: false, attempts: { lt: maxAttempts } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (claimed.count === 0) {
+      throw new OtpError(
+        'OTP_ATTEMPTS_EXCEEDED',
+        'Too many wrong attempts. Request a new code.',
+      );
+    }
 
-    if (!matches) {
-      await this.prisma.otpCode.update({
-        where: { id: record.id },
-        data: { attempts: { increment: 1 } },
-      });
+    if (!this.codeMatches(userId, code, record.codeHash)) {
       throw new OtpError('OTP_INVALID', 'Incorrect code.');
     }
 
-    await this.prisma.otpCode.update({
-      where: { id: record.id },
+    // Consume atomically: if two requests send the right code at once, only one wins
+    const consumed = await this.prisma.otpCode.updateMany({
+      where: { id: record.id, consumed: false },
       data: { consumed: true },
     });
+    if (consumed.count === 0) {
+      throw new OtpError('OTP_INVALID', 'This code was already used.');
+    }
   }
 }

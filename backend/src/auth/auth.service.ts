@@ -13,7 +13,10 @@ import { MailService } from '../mail/mail.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
-const BCRYPT_ROUNDS = 12;
+const BCRYPT_ROUNDS = 10;
+// Compared against when the email is unknown, so response time doesn't reveal
+// which emails have accounts.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_ROUNDS);
 
 @Injectable()
 export class AuthService {
@@ -51,7 +54,7 @@ export class AuthService {
       this.logger.error(
         `Failed to send OTP for ${email}: ${(err as Error).message}`,
       );
-      // We still created the user. Let them hit "resend".
+      // The user exists, so they can request a new code with "resend".
       throw new BadRequestException({
         error: 'OTP_SEND_FAILED',
         message: 'Account created, but we could not send the code. Try resend.',
@@ -80,14 +83,26 @@ export class AuthService {
       });
     }
 
+    let code: string;
     try {
-      const code = await this.otp.issueForUser(user.id);
-      await this.mail.sendOtp(email, code);
+      code = await this.otp.issueForUser(user.id);
     } catch (err) {
       if (err instanceof OtpError) {
         throw new BadRequestException({ error: err.code, message: err.message });
       }
       throw err;
+    }
+
+    try {
+      await this.mail.sendOtp(email, code);
+    } catch (err) {
+      this.logger.error(
+        `Failed to resend OTP for ${email}: ${(err as Error).message}`,
+      );
+      throw new BadRequestException({
+        error: 'OTP_SEND_FAILED',
+        message: 'We could not send the code. Please try again in a moment.',
+      });
     }
 
     return { message: 'A new code has been sent.' };
@@ -104,8 +119,14 @@ export class AuthService {
         message: 'Incorrect code.',
       });
     }
+
+    // An already-verified account must never get a token from this endpoint:
+    // that would let anyone who knows the email skip the password check.
     if (user.emailVerified) {
-      return this.issueToken(user.id, email);
+      throw new BadRequestException({
+        error: 'ALREADY_VERIFIED',
+        message: 'This email is already verified. Please log in.',
+      });
     }
 
     try {
@@ -130,25 +151,22 @@ export class AuthService {
     const email = dto.email.toLowerCase().trim();
 
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) {
+
+    // Always run a compare so timing doesn't reveal whether the email exists
+    const ok = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
+    if (!user || !ok) {
       throw new UnauthorizedException({
         error: 'INVALID_CREDENTIALS',
         message: 'Incorrect email or password.',
       });
     }
 
+    // Only reached with the correct password, so this doesn't leak which
+    // emails are registered.
     if (!user.emailVerified) {
       throw new UnauthorizedException({
         error: 'EMAIL_NOT_VERIFIED',
         message: 'Verify your email before logging in.',
-      });
-    }
-
-    const ok = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!ok) {
-      throw new UnauthorizedException({
-        error: 'INVALID_CREDENTIALS',
-        message: 'Incorrect email or password.',
       });
     }
 
