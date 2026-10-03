@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, Pressable, RefreshControl, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tasksApi, Task } from '../api/tasks';
 import { profileApi } from '../api/profile';
 import { getErrorMessage } from '../api/client';
@@ -23,6 +23,8 @@ const greeting = () => {
 
 export default function HomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const qc = useQueryClient();
+
   const profileQ = useQuery({ queryKey: ['profile'], queryFn: profileApi.get });
   const catsQ = useQuery({ queryKey: ['categories'], queryFn: tasksApi.categories });
   const tasksQ = useQuery({ queryKey: ['tasks'], queryFn: () => tasksApi.list() });
@@ -30,6 +32,15 @@ export default function HomeScreen({ navigation }: Props) {
 
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (taskId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
+      return next;
+    });
+  };
 
   const selected = selectedQ.data ?? [];
 
@@ -48,23 +59,49 @@ export default function HomeScreen({ navigation }: Props) {
             (t) =>
               t.name.toLowerCase().includes(q) ||
               t.description.toLowerCase().includes(q) ||
-              t.category.name.toLowerCase().includes(q)
+              t.category.name.toLowerCase().includes(q),
           ),
-    [tasksQ.data, q]
+    [tasksQ.data, q],
   );
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([profileQ.refetch(), catsQ.refetch(), tasksQ.refetch(), selectedQ.refetch()]);
+    await Promise.all([
+      profileQ.refetch(),
+      catsQ.refetch(),
+      tasksQ.refetch(),
+      selectedQ.refetch(),
+    ]);
     setRefreshing(false);
   };
 
+  const del = useMutation({
+    mutationFn: (taskId: string) => tasksApi.remove(taskId),
+    onSuccess: (fresh) => qc.setQueryData(['selected-tasks'], fresh),
+    onError: (e) => Alert.alert('Could not remove', getErrorMessage(e)),
+  });
+
+  const deleteTask = (taskId: string) => {
+    Alert.alert('Remove task?', 'This will remove it from your list.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => del.mutate(taskId) },
+    ]);
+  };
+
   const openCategory = (t: Task) =>
-    navigation.navigate('CategoryTasks', { categoryId: t.category.id, categoryName: t.category.name });
+    navigation.navigate('CategoryTasks', {
+      categoryId: t.category.id,
+      categoryName: t.category.name,
+    });
 
   if (catsQ.isLoading || selectedQ.isLoading) return <LoadingView />;
   if ((catsQ.error && !catsQ.data) || (selectedQ.error && !selectedQ.data)) {
-    return <ErrorView message={getErrorMessage(catsQ.error ?? selectedQ.error)} onRetry={refresh} />;
+    return (
+      <ErrorView
+        message={getErrorMessage(catsQ.error ?? selectedQ.error)}
+        onRetry={refresh}
+      />
+    );
   }
 
   const firstName = profileQ.data?.profile?.name?.trim().split(' ')[0];
@@ -73,7 +110,12 @@ export default function HomeScreen({ navigation }: Props) {
     <Screen
       topInset={insets.top}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.primary} colors={[colors.primary]} />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={refresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
       }
     >
       <View style={s.header}>
@@ -81,7 +123,11 @@ export default function HomeScreen({ navigation }: Props) {
           {greeting()}
           {firstName ? `, ${firstName}` : ''}
         </Text>
-        <Pressable onPress={() => navigation.navigate('Account')} hitSlop={12} accessibilityLabel="Profile">
+        <Pressable
+          onPress={() => navigation.navigate('Account')}
+          hitSlop={12}
+          accessibilityLabel="Profile"
+        >
           <Ionicons name="person-outline" size={26} color={colors.text} />
         </Pressable>
       </View>
@@ -93,19 +139,69 @@ export default function HomeScreen({ navigation }: Props) {
           <Text style={s.cardSub}>Pick a category below to choose your tasks.</Text>
         </View>
       ) : (
-        selected.map((t) => (
-          <Pressable key={t.id} style={s.card} onPress={() => openCategory(t)}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.cardTitle}>{t.name}</Text>
-              <Text style={s.cardSub}>{t.category.name}</Text>
+        selected.map((t) => {
+          const isOpen = expanded.has(t.id);
+          const hasNote = !!t.customDescription?.trim();
+
+          return (
+            <View key={t.id} style={s.card}>
+              <Pressable onPress={() => toggleExpand(t.id)} style={s.cardHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardTitle}>{t.name}</Text>
+                  <Text style={s.date}>
+                    {t.category.name} · Added{' '}
+                    {new Date(t.createdAt).toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                    })}
+                  </Text>
+                </View>
+
+                <Ionicons
+                  name={isOpen ? 'chevron-up' : 'chevron-down'}
+                  size={20}
+                  color={colors.muted}
+                  style={{ marginRight: 4 }}
+                />
+
+                <Pressable onPress={() => deleteTask(t.id)} hitSlop={12}>
+                  <Ionicons name="trash-outline" size={20} color={colors.danger} />
+                </Pressable>
+              </Pressable>
+
+              {isOpen && (
+                <View style={s.cardBody}>
+                  {hasNote ? (
+                    <>
+                      <Text style={s.bodyLabel}>Your note</Text>
+                      <Text style={s.bodyText}>{t.customDescription}</Text>
+                    </>
+                  ) : (
+                    <Text style={s.bodyEmpty}>No note added.</Text>
+                  )}
+
+                  <Pressable
+                    onPress={() => openCategory(t)}
+                    style={({ pressed }) => [s.editBtn, pressed && { opacity: 0.7 }]}
+                  >
+                    <Text style={s.editBtnText}>
+                      Edit tasks in {t.category.name}
+                    </Text>
+                    <Ionicons name="arrow-forward" size={16} color={colors.primary} />
+                  </Pressable>
+                </View>
+              )}
             </View>
-            <Text style={s.view}>Edit ›</Text>
-          </Pressable>
-        ))
+          );
+        })
       )}
 
       <Text style={s.heading}>What do you need help with?</Text>
-      <SearchField placeholder="AC leaking, cook for weekends…" value={search} onChangeText={setSearch} />
+      <SearchField
+        placeholder="AC leaking, cook for weekends…"
+        value={search}
+        onChangeText={setSearch}
+      />
 
       {q ? (
         <>
@@ -139,8 +235,16 @@ export default function HomeScreen({ navigation }: Props) {
               return (
                 <Pressable
                   key={c.id}
-                  style={({ pressed }) => [s.chip, pressed && { backgroundColor: colors.primarySoft }]}
-                  onPress={() => navigation.navigate('CategoryTasks', { categoryId: c.id, categoryName: c.name })}
+                  style={({ pressed }) => [
+                    s.chip,
+                    pressed && { backgroundColor: colors.primarySoft },
+                  ]}
+                  onPress={() =>
+                    navigation.navigate('CategoryTasks', {
+                      categoryId: c.id,
+                      categoryName: c.name,
+                    })
+                  }
                 >
                   <Ionicons name={categoryIcon(c.name)} size={18} color={colors.primary} />
                   <Text style={s.chipText}>{c.name}</Text>
@@ -160,27 +264,129 @@ export default function HomeScreen({ navigation }: Props) {
 }
 
 const s = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  greeting: { flex: 1, fontSize: 24, fontFamily: fonts.semibold, color: colors.text, paddingRight: 12 },
-  eyebrow: { fontSize: 12, letterSpacing: 0.6, color: colors.label, fontFamily: fonts.semibold, marginBottom: 10, textTransform: 'uppercase' },
-  heading: { fontSize: 22, fontFamily: fonts.semibold, color: colors.text, marginTop: 28, marginBottom: 14 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  greeting: {
+    flex: 1,
+    fontSize: 24,
+    fontFamily: fonts.semibold,
+    color: colors.text,
+    paddingRight: 12,
+  },
+  eyebrow: {
+    fontSize: 12,
+    letterSpacing: 0.6,
+    color: colors.label,
+    fontFamily: fonts.semibold,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  heading: {
+    fontSize: 22,
+    fontFamily: fonts.semibold,
+    color: colors.text,
+    marginTop: 28,
+    marginBottom: 14,
+  },
   card: {
-    flexDirection: 'column', borderWidth: 1, borderColor: colors.border,
-    borderRadius: radius.lg, padding: 16, marginBottom: 10, backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    backgroundColor: '#fff',
+    marginBottom: 10,
+    padding: 10,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
   },
   cardTitle: { fontSize: 16, fontFamily: fonts.semibold, color: colors.text },
-  cardSub: { fontSize: 14, color: colors.muted, marginTop: 2, fontFamily: fonts.regular },
-  view: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 15, marginLeft: 12 },
+  cardSub: {
+    fontSize: 14,
+    color: colors.muted,
+    marginTop: 2,
+    fontFamily: fonts.regular,
+  },
+  date: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    marginTop: 4,
+  },
+  cardBody: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 14,
+  },
+  bodyLabel: {
+    fontSize: 11,
+    letterSpacing: 0.5,
+    color: colors.label,
+    fontFamily: fonts.semibold,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  bodyText: {
+    fontSize: 15,
+    color: colors.text,
+    fontFamily: fonts.regular,
+    lineHeight: 21,
+  },
+  bodyEmpty: {
+    fontSize: 14,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  editBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 14,
+    alignSelf: 'flex-start',
+  },
+  editBtnText: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
+    fontSize: 14,
+  },
+  view: {
+    color: colors.primary,
+    fontFamily: fonts.semibold,
+    fontSize: 15,
+    marginLeft: 12,
+  },
   muted: { color: colors.muted, fontFamily: fonts.regular },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   chip: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: colors.border,
-    borderRadius: radius.pill, paddingVertical: 11, paddingHorizontal: 16, backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
   },
   chipText: { fontSize: 15, fontFamily: fonts.medium, color: colors.text },
   badge: {
-    minWidth: 20, height: 20, borderRadius: 10, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
   },
   badgeText: { color: '#fff', fontSize: 11, fontFamily: fonts.bold },
 });
